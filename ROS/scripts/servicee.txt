@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+
+from eurobot2024.srv import RobotCmdRequest,RobotCmdResponse, RobotCmd , ArduinoCmd # Example of a ROS service message
+import rospy
+from std_msgs.msg import String
+import signal
+ardproxy = None
+stmproxy = None
+
+def timeout_handler(signum, frame):
+    raise TimeoutError("ROS service call timed out")
+
+def send_service_ard(message):
+    global ardproxy
+      # Wait for the service to become available
+    if ardproxy == None:
+        rospy.wait_for_service('/StmCommand')
+        print("Creating ARD Prox")
+        try:
+           ardproxy = rospy.ServiceProxy('/ArduinoCommand', ArduinoCmd,persistent=True)
+        except:
+            print("erreur")
+    try:
+        #send_msg = rospy.ServiceProxy('/ArduinoCommand', ArduinoCmd)  # Create service proxy with correct service class
+        response = ardproxy(message)  # Call the service
+        return response
+    except rospy.ServiceException as e:
+        print("Service failed",e)
+        ardproxy = None
+    except Exception as e:
+        print(e)
+
+class StmCommandResponse:
+    def __init__(self, success):
+        self.success = success
+
+def send_service_stm(message):
+    global stmproxy
+    if stmproxy == None:
+        rospy.wait_for_service('/StmCommand')
+        print("Creating STM Prox")
+        try:
+            stmproxy = rospy.ServiceProxy('/StmCommand', RobotCmd, persistent=True)
+        except:
+            print("erruer")
+    try:
+        response = stmproxy(message)  # Call the service
+        return response
+    except rospy.ServiceException as e:
+        stmproxy = None
+        print("Service failed",e)
+    #except TimeoutError as e:
+        #print("Service call timed out:", e)
+
+        #return send_service_stm(message)
+    except Exception as e:
+        print(e)
+   
+    
+
+if __name__=='__main__':
+    message=RobotCmdRequest()
+    message.command="moveDistance"
+    message.x=1500
+    message.speed=600
+    send_service_stm(message)

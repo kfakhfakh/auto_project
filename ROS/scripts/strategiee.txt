@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+from eurobot2024.msg import Pose
+from eurobot2024.srv import RobotCmdRequest, ArduinoCmdRequest
+from send_service import send_service_stm, send_service_ard
+from eurobot2024.msg import Pose
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Bool
+import threading
+from threading import Thread
+import numpy as np
+import time
+from threading import Lock
+import paho.mqtt.client as mqtt
+from datetime import datetime
+import subprocess
+import rospy
+import math
+from Disco import UpdateScore
+
+curr_x,curr_y, curr_phi=0,0,0
+
+enem_x,enem_y = -999,-999
+global client
+famakhasm = False
+KolouCv = False
+sakrnal7anout = False
+cbon = True
+switch = True
+CamCalib = [990,990]
+
+class map:
+    def __init__(self, x, y):
+        self.x=x
+        self.y=y
+
+class position:
+    def __init__(self, x, y, phi):
+        self.x= x
+        self.y=y
+        self.phi=phi
+
+def execute_command(command):
+    result = subprocess.run(command, capture_output=True, text=True)
+    print("Output:", result.stdout)
+    print("Return code:", result.returncode)
+
+def posfeedback(pos):
+    global curr_x, curr_y, curr_phi, switch
+    if switch == True:
+        curr_x=pos.x
+        curr_y=pos.y
+        curr_phi=pos.phi_deg
+
+def setSpacingEncoder(spacing):
+    message=RobotCmdRequest()
+    message.command="setSpacingEncoder"
+    message.x=spacing
+    feedback = send_service_stm(message)
+
+    
+def setCoeffs(kp, ki ,kb):
+    message=RobotCmdRequest()
+    message.command="setCoeffs"
+    message.x=kp
+    message.y=ki
+    message.phi=kb
+    feedback = send_service_stm(message)
+    
+    return feedback
+
+def setRadius(R, L):
+    message=RobotCmdRequest()
+    message.command="setRadius"
+    message.x=R
+    message.y=L
+    feedback = send_service_stm(message)
+    
+    return feedback
+
+def setCoords(x, y, phi):
+    message=RobotCmdRequest()
+    message.command="setCoords"
+    message.x=x
+    message.y=y
+    message.phi=phi
+    feedback = send_service_stm(message)
+    return feedback
+
+def moveDistance(dist, speed):
+    global switch, curr_phi,curr_x, curr_y
+    if sakrnal7anout:
+            return
+    time.sleep(0.1)
+    if(CamCalib[0] == curr_phi):
+        print("Salaht: ", curr_phi,"=>",CamCalib[1])
+        curr_phi = CamCalib[0]
+        setCoords(curr_x, curr_y, CamCalib[1])
+    global currentx, currenty
+    if dist<0:
+        client.publish("Way","1")
+    else:
+        client.publish("Way","0")
+    totaldist = dist
+    firstpos = [curr_x, curr_y]
+    while True:
+        if sakrnal7anout:
+            return
+        message=RobotCmdRequest()
+        message.command="moveDistance"
+        message.x=totaldist
+        message.speed=speed
+        feedback = send_service_stm(message)
+        if feedback.success:
+            break
+        pos = [curr_x, curr_y]
+        distraveled = math.sqrt((firstpos[0]-pos[0])**2+(firstpos[1]-pos[1])**2)
+        print(firstpos,"first pos")
+        print(pos, "current pos")
+        print(distraveled,"distance traveled")
+        firstpos = pos
+        if abs(distraveled-totaldist) < 10 or (distraveled>totaldist and dist>0) or (distraveled<totaldist and dist<0):
+            break
+        time.sleep(1)
+        if dist < 0:
+            totaldist += distraveled
+        else:
+            totaldist -= distraveled
+        print(totaldist, "left")
+        if not StanaKhasm():
+            return False
+    
+    return feedback
+
+def robotLocate(x, y, speed):
+    if sakrnal7anout:
+        return
+    global curr_x, curr_y, curr_phi, switch
+    time.sleep(0.1)
+    if(CamCalib[0] == curr_phi):
+        print("Salaht: ", curr_phi,"=>",CamCalib[1])
+        curr_phi = CamCalib[0]
+        setCoords(curr_x, curr_y, CamCalib[1])
+    client.publish("Way","0")
+    message=RobotCmdRequest()
+    message.command="robotLocate"
+    message.x=x
+    message.y=y
+    message.speed=speed
+    feedback = send_service_stm(message)
+    if feedback.success:
+        return feedback
+    #setCoords(curr_x, curr_y, curr_phi)
+    if not StanaKhasm():
+        return False
+    pos = [curr_x, curr_y]
+    dist = math.sqrt((pos[0]-x)**2+(pos[1]-y)**2)
+    return moveDistance(dist, speed)
+
+def rotate(phi, speed):
+    if sakrnal7anout:
+        return
+    message=RobotCmdRequest()
+    message.command="rotate"
+    message.phi=phi
+    message.speed=speed
+    feedback = send_service_stm(message)
+    
+    return feedback
+
+def orientate(phi, speed):
+    global curr_x, curr_y, curr_phi, switch
+    time.sleep(0.1)
+    if(CamCalib[0] == curr_phi):
+        print("Salaht: ", curr_phi,"=>",CamCalib[1])
+        curr_phi = CamCalib[0]
+        setCoords(curr_x, curr_y, CamCalib[1])
+    if sakrnal7anout:
+        return
+    message=RobotCmdRequest()
+    message.command="orientate"
+    message.phi=phi
+    message.speed=speed
+    feedback = send_service_stm(message)
+    
+    return feedback
+
+def rotateAsync(phi, speed):
+    if sakrnal7anout:
+        return
+    thread = Thread(target = rotate, args = (phi, speed, ))
+    thread.start()
+    return thread
+
+def robotLocateAsync(x, y, speed):
+    if sakrnal7anout:
+        return
+    thread = Thread(target = robotLocate, args = (x, y, speed, ))
+    thread.start()
+    return thread
+
+def moveDistanceAsync(dist, speed):
+    if sakrnal7anout:
+        return
+    thread = Thread(target = moveDistance, args = (dist, speed, ))
+    thread.start()
+    return thread
+
+def setCoordsAsync(x, y, phi):
+    thread = Thread(target = setCoords, args = (x, y, phi, ))
+    thread.start()
+    return thread
+
+
+def execute_command(command):
+    result = subprocess.run(command, capture_output=True, text=True)
+    print("Output:", result.stdout)
+    print("Return code:", result.returncode)    
+    
+def asta3(dist, speed):
+    message=RobotCmdRequest()
+    message.command="asta3"
+    message.x=dist
+    message.speed=speed
+    print(message)
+    feedback = send_service_stm(message)
+
+
+def init():
+    # dissingage all systemes
+    feedback=action_ard("frontUp")
+    feedback=action_ard("backUp")
+    feedback=action_ard("frontDownNoss")
+    feedback=action_ard("backDownNoss")
+    feedback=action_ard("backOpen")
+    feedback=action_ard("frontOpen")
+    feedback=action_ard("aimantOffBack")
+    feedback=action_ard("aimantOffFront")
+
+
+def main():
+    global curr_x, curr_y,enem_y, enem_x
+    print("Started")
+    rospy.init_node("pose_sub")
+    rospy.Subscriber("/Pose", Pose, callback=posfeedback)
+    rospy.Subscriber("/tirette", Bool, callback=Ontirettedetected)
+
+    
+
+    score=41
+    
+    UpdateScore(score)
+    init()
+    moveDistance(0,0)  
+    setCoeffs(9, 0.8,100)
+    setRadius(40.57, 40.04)
+    setSpacingEncoder(251.2)
+    
+    feedback = setCoords(2800 ,1815, 180)
+    Ontirettedetected(True)
+ 
+    time.sleep(0.1)
+
+
+    # dezz_trois_panneaux
+    """
+    feedback= robotLocateMoon(2200, 1815, 200)
+    feedback=action_ard("panneauIn")
+    """
+
+    #hezz_plants
+
+    feedback = robotLocate(2300, 1290, 600)
+    feedback = orientate(180, 400)
+    print(feedback)
+
+    feedback = moveDistance(145, 100)
+    print(feedback)
+    feedback = moveDistance(-35, 300)  
+    feedback=action_ard("frontDown")
+    feedback=action_ard("frontClose")
+    feedback = moveDistance(-20, 400)
+    print(feedback)
+    feedback = rotate(180, 200)
+    feedback = moveDistance(-120, 400)
+    feedback = moveDistance(-50, 100)
+    print(feedback)
+    feedbackasync=action_ardAsync("backDown")
+    feedback = moveDistance(30, 100)
+    feedbackasync.join()
+    feedback=action_ard("backClose")
+    print(feedback)
+
+    feedbackasync=action_ardAsync("zouzUp")
+    feedback = robotLocate(1952, 1704, 600) # zedt tarf santi fel x kenet 1975
+    feedbackasync.join()
+    
+    #aimanet 
+    SettiElLidar(False)
+    feedback= orientate(96, 200)#90
+    feedback=action_ard("aimantOnFront")
+    feedback = moveDistance(77, 100)#100
+    time.sleep(0.5)
+    feedback= moveDistance(-20,300)#30
+    feedback = robotLocate(1961,1745,400) # zedt tarf santi fel x kenet 1980
+    feedback= orientate (-90,200)
+    feedback=action_ard("aimantOnBack")
+    feedback = moveDistance(-85,100)
+    feedback = asta3(-50,100)
+    time.sleep(0.2)
+    feedback = setCoords(2000, 1865, -92)
+
+
+    #yhott el kazi
+    feedback = moveDistance(70, 400)
+    print(feedback)
+    feedback = robotLocate(2840, 1770, 600) #2780-1760
+    orientate(0, 100)
+    #robot ysayeb 3 plants lwela fi pots 
+    feedback = action_ard("aimantOffFront")
+    feedback = moveDistance(-20, 600)
+    feedback=action_ard("frontDownNoss")
+    feedback=action_ard("frontOpen")
+    feedback=action_ard("frontUp")
+    feedback = moveDistance(-70, 400)
+    orientate(90, 600)
+    feedback = action_ard("aimantOffBack")
+    moveDistance(20, 600)
+    action_ard("backDownNoss")
+    action_ard("backOpen")
+    action_ard("backUp")
+    moveDistance(100,300)
+    feedback = asta3(300,250)
+    setCoords(curr_x,1906,90)
+
+    moveDistance(-100, 600)
+    
+   
+    #feedback= robotLocateMoon(2800, 1775, 200)1825
+    feedback= robotLocate(2800,1825,200)
+    feedback= orientate(0,200)
+    
+    #dez 6 pannowet
+    #time.sleep(5)
+    action_ard("panneauOut")
+    feedback= robotLocateMoon(2200, 1850 ,200)
+    if (enem_y<2000 and enem_y>1500) and (enem_x>1000 and enem_x<2000):
+        
+        feedback = robotLocate(1000,1100,500)
+        orientate(90,150)
+    else:
+        robotLocateMoon(1200, 1890, 200)
+	#feedback= robotLocateMoon(1200, 1830, 200)
+        action_ard("panneauIn")
+        
+        SettiElLidar(True)
+        robotLocate(1303, 1727, 600)
+        orientate(-45,200)
+
+
+    # hazn plantet
+ 
+    moveDistance(235, 100) 
+    moveDistance(-20, 200)
+    feedback=action_ard("frontDown")
+    feedback=action_ard("frontClose")
+    print(feedback)
+    feedbackasync=action_ardAsync("frontUp")
+
+    robotLocate(2625, 620,500)
+    feedbackasync.join()
+    rotate(-320, 400)
+    orientate(0,400)
+    feedback=action_ard("aimantOnFront")
+    moveDistance(135, 200)
+    time.sleep(0.5)
+    moveDistance(-100, 500)    
+    robotLocate(2629, 226, 500)
+    orientate(-90,400)
+    feedback=action_ard("aimantOffFront")
+    moveDistance(-20, 200) 
+    feedback=action_ard("frontDownNoss")
+    feedback=action_ard("frontOpen")
+    feedback=action_ard("frontUp")
+    moveDistance(-100, 200)
+
+main()
