@@ -1,6 +1,6 @@
 
 /*
- * navigation_te3na.c
+ * navigation.c
  *
  *  Created on: Oct 3, 2024
  *      Author: User
