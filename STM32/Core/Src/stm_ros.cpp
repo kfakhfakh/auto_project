@@ -1,4 +1,6 @@
 #include <ros.h>
+#include "navigation.h"
+#include "motor.h"
 #include <string>
 #include <iostream>
 #include <autonome/cmd.h>
