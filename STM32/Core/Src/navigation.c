@@ -7,7 +7,6 @@
  */
 #include "navigation.h"
 #include "odometry.h"
-#include "motor.h"
 #include "math.h"
 #include <stdlib.h>
 #include <stdbool.h>
